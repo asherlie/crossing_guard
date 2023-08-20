@@ -105,25 +105,27 @@ uint8_t* read_packet(int sock, int max_sz, ssize_t* br){
     return packet;
 }
 
-_Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, in_addr_t s_ip, in_addr_t d_ip){
-    /*struct packet* phdr = (struct packet*)p;*/
-    struct ethhdr* ehdr = (struct ethhdr*)p;
-    struct iphdr* ihdr = (struct iphdr*)p+sizeof(struct ethhdr);
+_Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, char* s_ip, char* d_ip){
+    struct packet* phdr = (struct packet*)p;
+    struct in_addr s_ip_filter, d_ip_filter;
+
+    if(s_ip)inet_pton(AF_INET, s_ip, &s_ip_filter);
+    if(d_ip)inet_pton(AF_INET, s_ip, &d_ip_filter);
     /*phdr->ihdr.*/
 
     if(br < (long)sizeof(struct packet))
         return 0;
 
-    if(s_addr && memcmp(s_addr, ehdr->h_source, 6))
+    if(s_addr && memcmp(s_addr, phdr->ehdr.h_source, 6))
         return 0;
 
-    if(d_addr && memcmp(d_addr, ehdr->h_dest, 6))
+    if(d_addr && memcmp(d_addr, phdr->ehdr.h_dest, 6))
         return 0;
 
-    if(s_ip && s_ip != ihdr->saddr)
+    if(s_ip && s_ip_filter.s_addr != phdr->ihdr.saddr)
         return 0;
 
-    if(d_ip && d_ip != ihdr->daddr)
+    if(d_ip && d_ip_filter.s_addr != phdr->ihdr.daddr)
         return 0;
     return 1;
 }
@@ -141,8 +143,7 @@ int main(){
     /*struct sockaddr* sa_i;*/
     /*socklen_t slen_i;*/
     ssize_t br;
-    struct in_addr ia_filter;
-    inet_pton(AF_INET, "192.168.4.119", &ia_filter);
+    
 
     /*printf("sock %i\n", sock);*/
     /*br = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr*)&sa_i, &slen_i);*/
@@ -150,8 +151,8 @@ int main(){
         buf = read_packet(sock, 4096, &br);
 
         if(!buf)continue;
-        /*if(!filter_packet(buf, br, NULL, NULL, ia_filter.s_addr, 0)){*/
-        if(!filter_packet(buf, br, NULL, NULL, 0, 0)){
+        if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){
+        /*if(!filter_packet(buf, br, NULL, NULL, 0, 0)){*/
             free(buf);
             continue;
         }
