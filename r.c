@@ -17,6 +17,11 @@
  * };
 */
 
+/* TODO: if i see problems with the alignment here
+ * i can always just use
+ *  struct ethhdr* ehdr = (struct ethhdr*)buf;
+ *  struct iphdr* ihdr = (struct iphdr*)(buf+sizeof(struct ethhdr));
+ */
 struct __attribute__((__packed__)) packet{
     struct ethhdr ehdr;
     struct iphdr ihdr;
@@ -45,8 +50,7 @@ void p_eth_addr(uint8_t* addr){
 }
 
 int pp_buf(uint8_t* buf, ssize_t br){
-    struct ethhdr* ehdr = (struct ethhdr*)buf;
-    struct iphdr* ihdr = (struct iphdr*)buf+sizeof(struct ethhdr);
+    struct packet* p = (struct packet*)buf;
     char ipbuf[18] = {0};
     struct in_addr src, dest;
 
@@ -54,9 +58,9 @@ int pp_buf(uint8_t* buf, ssize_t br){
         return 0;
     }
     printf("from: ");
-    p_eth_addr(ehdr->h_source);
+    p_eth_addr(p->ehdr.h_source);
     printf("to: ");
-    p_eth_addr(ehdr->h_dest);
+    p_eth_addr(p->ehdr.h_dest);
 
 
     if(br < (long)(sizeof(struct ethhdr) + sizeof(struct iphdr))){
@@ -70,9 +74,9 @@ int pp_buf(uint8_t* buf, ssize_t br){
     /*p_eth_addr(((struct packet*)buf)->ehdr.h_source);*/
 
 
-    src.s_addr = ihdr->saddr;
-    dest.s_addr = ihdr->daddr;
-    printf("packet len: %i\n", ntohs(ihdr->tot_len));
+    src.s_addr = p->ihdr.saddr;
+    dest.s_addr = p->ihdr.daddr;
+    printf("packet len: %i\n", ntohs(p->ihdr.tot_len));
     inet_ntop(AF_INET, &src, ipbuf, sizeof(ipbuf));
     printf("saddr: %s\n", ipbuf);
     inet_ntop(AF_INET, &dest, ipbuf, sizeof(ipbuf));
