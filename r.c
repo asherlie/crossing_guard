@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <sys/socket.h>
@@ -26,6 +27,56 @@ struct __attribute__((__packed__)) packet{
     struct ethhdr ehdr;
     struct iphdr ihdr;
 };
+
+struct ip_bucket{
+    /*in_addr_t ip;*/
+    struct packet* head;
+    struct ip_bucket* next;
+};
+
+struct packet_storage{
+    /*
+     * uint32_t
+     * in_addr_t
+    */
+    int n_buckets;
+    struct ip_bucket** buckets;
+};
+
+void init_packet_storage(struct packet_storage* ps, int n_buckets){
+    ps->n_buckets = n_buckets;
+    ps->buckets = calloc(sizeof(struct ip_bucket*), ps->n_buckets);
+}
+
+/* TODO: make this threadsafe */
+void insert_packet_storage(struct packet_storage* ps, struct packet* p){
+    int idx = p->ihdr.saddr % ps->n_buckets;
+    struct ip_bucket* ib = ps->buckets[idx], * tmp;// * prev_i;
+
+    /* create bucket */
+    if(!ib){
+        ib = (ps->buckets[idx] = malloc(sizeof(struct ip_bucket)));
+        /*ib->ip = p->ihdr.saddr;*/
+        ib->next = NULL;
+        ib->head = p;
+    }
+
+    for(struct ip_bucket* i = ib; i; i = i->next){
+        if(i->head->ihdr.saddr == p->ihdr.saddr){
+            ib = i;
+            break;
+        }
+        /*prev_i = i;*/
+    }
+
+    if(ib->head->ihdr.saddr != p->ihdr.saddr){
+        tmp = malloc(sizeof(struct ip_bucket));
+        tmp->head = p;
+        tmp->next = ib;
+        /*ib->head = tmp;*/
+        ps->buckets[idx] = tmp;
+    }
+}
 
 void hexdump(uint8_t* buf, ssize_t br, _Bool onlyalph){
     for(int i = 0; i < br; ++i){
@@ -130,6 +181,13 @@ _Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, ch
     return 1;
 }
 
+
+/*
+ * TODO:
+ * have it sort by src IP AND by eth addr
+ * it'll continuously print a 0-n indexed list of addresses and i can enter an integer
+ * to print out the packets intercepted for that sender
+*/
 int main(){
     int sock = socket(AF_INET, SOCK_RAW, 0);
     /*struct ethhdr ehdr;*/
@@ -151,8 +209,9 @@ int main(){
         buf = read_packet(sock, 4096, &br);
 
         if(!buf)continue;
-        if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){
-        /*if(!filter_packet(buf, br, NULL, NULL, 0, 0)){*/
+        /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){*/
+        /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.63", 0)){*/
+        if(!filter_packet(buf, br, NULL, NULL, 0, 0)){
             free(buf);
             continue;
         }
