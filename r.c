@@ -52,7 +52,8 @@ struct packet_storage{
 
     _Atomic int idx_filter;
     _Atomic int n_ips, ip_cap;
-    in_addr_t* ip_addresses;
+    _Atomic in_addr_t* ip_addresses;
+    _Atomic in_addr_t* old_ptr;
 };
 
 void init_packet_storage(struct packet_storage* ps, int n_buckets){
@@ -60,10 +61,11 @@ void init_packet_storage(struct packet_storage* ps, int n_buckets){
     ps->buckets = calloc(sizeof(struct ip_bucket*), ps->n_buckets);
     ps->idx_filter = -1;
 
-    ps->ip_cap = 1000;
+    ps->ip_cap = 100;
     ps->n_ips = 0;
     ps->n_packets = 0;
     ps->ip_addresses = malloc(sizeof(in_addr_t)*ps->ip_cap);
+    ps->old_ptr = NULL;
 }
 
 /* TODO: make this threadsafe */
@@ -88,6 +90,42 @@ struct ip_bucket* create_bucket(struct address_packets* ap){
     return ib;
 }
 
+/*
+ * to insert a new ip to in_addr_t* ip_addresses;
+ * all we need to do is insert into the next index!
+ * if buf isn't big enough, resize, take our time
+ * and swap out the pointer atomically
+ * once pointer's swapped out, atomically increment n_ips
+ *
+ * this works because we only insert from one thread
+ * the only critical section becomes the reading of indices
+*/
+/* this does not need to be threadsafe as it will only be called from one thread */
+
+void insert_ip_list(struct packet_storage* ps, struct packet* p){
+    _Atomic in_addr_t* tmp, * old_ia;
+
+    if(ps->n_ips == ps->ip_cap){
+        ps->ip_cap *= 2;
+        tmp = malloc(sizeof(in_addr_t)*ps->ip_cap);
+        old_ia = ps->ip_addresses;
+        memcpy(tmp, ps->ip_addresses, sizeof(in_addr_t)*ps->n_ips);
+        atomic_store(&ps->ip_addresses, tmp);
+        /* TODO: this potentially leaks memory
+         * if old_ptr is non-null and we're resizing before p_ip_addresses() had
+         * the chance to free()
+         * we should use CAS() to check if old_ptr is non-null and to swap with 
+         * old_ia if it is
+         * then, with the old value of old_ptr, we'll free here
+         *
+         * this is a non-critical fix because it doesn't corrupt data, only leaks mem
+         */
+        atomic_store(&ps->old_ptr, old_ia);
+    }
+    ps->ip_addresses[ps->n_ips] = p->ihdr.saddr;
+    atomic_store(&ps->n_ips, ps->n_ips+1);
+}
+
 struct address_packets* insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t sz){
     int idx = p->ihdr.saddr % ps->n_buckets;
     struct ip_bucket* ib = ps->buckets[idx], * tmp_ib;
@@ -103,6 +141,7 @@ struct address_packets* insert_packet_storage(struct packet_storage* ps, struct 
     if(!ib){
         ib = create_bucket(tmp);
         ps->buckets[idx] = ib;
+        insert_ip_list(ps, p);
         return tmp;
 
         /*increment ps->n_ips atomically to reserve an insertion point*/
@@ -138,6 +177,7 @@ struct address_packets* insert_packet_storage(struct packet_storage* ps, struct 
         tmp_ib->head = NULL;
         ps->buckets[idx] = tmp_ib;
         ib = tmp_ib;
+        insert_ip_list(ps, p);
     }
 
     ++ib->n_packets;
@@ -246,6 +286,29 @@ _Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, ch
     return 1;
 }
 
+void p_ip_addresses(struct packet_storage* ps){
+    char ipbuf[18] = {0};
+    int n_ips = atomic_load(&ps->n_ips);
+    /* there's a chance that this has been realloc'd
+     * in case of this, free()ing is left to be done here
+     * and the old pointer is passed in ps->old_ptr
+     * this is always safe because insertion won't occur until
+     * after resizing of buffer anyway
+     */
+    _Atomic in_addr_t* addresses = atomic_load(&ps->ip_addresses);
+    _Atomic in_addr_t* old_ptr = atomic_load(&ps->old_ptr);
+
+    for(int i = 0; i < n_ips; ++i){
+        iaddr_to_str(addresses[i], ipbuf, sizeof(ipbuf));
+        printf("(%i) - IP %s\n", i, ipbuf);
+    }
+
+    if(old_ptr){
+        free(old_ptr);
+        atomic_store(&ps->old_ptr, NULL);
+    }
+}
+
 // prints out all packets for a given user according to the given idx
 // actually, this should take in in_addr_t and be CALLED by p_packet_storage()
 // this way we can pass either a user specified IP or an ip from the ip list
@@ -303,6 +366,25 @@ void p_packet_storage(struct packet_storage* ps, _Bool summary, struct ps_filter
 */
 
 /*
+ * need:
+ *  a thread to populate packet_storage
+ *      what's currently done in main()
+ *  a thread to read print index from stdin
+ *      this will update print pointer upon receiving an integer
+ *      otherwise, will reset idx to -1, printing only the summary
+ *  a thread to print to stdout from a saved `last_addr` pointer
+ *      thread will wait until ptr->next is available using pthread_cond_wait
+ *
+ *  could also just have a `print_from` ptr!
+ *  this is maintained when:
+ *      new print index is read (set ptr = bucktes[idx][ip][0])
+ *      we print a packet (increment ptr)
+ *
+ * this is a great design but we still need to keep track of IP indices to reference them
+*/
+/*void* */
+
+/*
  * TODO:
  * have it sort by src IP AND by eth addr
  * it'll continuously print a 0-n indexed list of addresses and i can enter an integer
@@ -344,7 +426,8 @@ int main(){
         puts("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         printf("read %li bytes\n", br);
         printf("%s%s", ANSI_CLR, ANSI_HOM);
-        p_packet_storage(&ps, 1, NULL);
+        p_ip_addresses(&ps);
+        /*p_packet_storage(&ps, 1, NULL);*/
 
         (void)ap;
         /*p_packet(ap, 1);*/
