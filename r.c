@@ -3,21 +3,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <string.h>
 #include <sys/socket.h>
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/rfcomm.h>
 #include <linux/if_packet.h>
 #include <linux/ip.h>
 #include <net/ethernet.h>
 #include <arpa/inet.h>
 /*#include <net/ieee80211_radiotap.h>*/
 
-/*
- * struct hdr{
- *     struct ethhdr ehdr;
- *     struct iphdr ihdr;
- * };
-*/
+struct ps_filter{
+    uint8_t* s_addr;
+    uint8_t* d_addr;
+    char* s_ip;
+    char* d_ip;
+};
 
 /* TODO: if i see problems with the alignment here
  * i can always just use
@@ -30,7 +29,6 @@ struct __attribute__((__packed__)) packet{
 };
 
 /* no need to waste space by storing address, it's in p */
-/*this stores an individual IP teehee :)*/
 struct address_packets{
     struct packet* p;
     int len;
@@ -39,17 +37,14 @@ struct address_packets{
 };
 
 struct ip_bucket{
-    /*in_addr_t ip;*/
+    int n_packets;
     struct address_packets* head;
     struct ip_bucket* next;
 };
 
 struct packet_storage{
-    /*
-     * uint32_t
-     * in_addr_t
-    */
     int n_buckets;
+    int n_packets;
     struct ip_bucket** buckets;
 
     _Atomic int idx_filter;
@@ -64,17 +59,11 @@ void init_packet_storage(struct packet_storage* ps, int n_buckets){
 
     ps->ip_cap = 1000;
     ps->n_ips = 0;
+    ps->n_packets = 0;
     ps->ip_addresses = malloc(sizeof(in_addr_t)*ps->ip_cap);
 }
 
 /* TODO: make this threadsafe */
-/*
- * pretty sure this just doesn't work at all - it only stores one packet
- * per bucket!
- * head needs a pointer to next
- * i'll wrap packet in a struct that is a linked list
-*/
-
 
 /*
 in summary:
@@ -94,6 +83,7 @@ struct ip_bucket* create_bucket(struct address_packets* ap){
 
     ib->next = NULL;
     ib->head = ap;
+    ib->n_packets = 1;
 
     return ib;
 }
@@ -102,6 +92,8 @@ struct address_packets* insert_packet_storage(struct packet_storage* ps, struct 
     int idx = p->ihdr.saddr % ps->n_buckets;
     struct ip_bucket* ib = ps->buckets[idx], * prev_ib = NULL, * tmp_ib;
     struct address_packets* tmp = malloc(sizeof(struct address_packets));
+
+    ++ps->n_packets;
 
     tmp->len = sz;
     tmp->p = p;
@@ -177,6 +169,7 @@ struct address_packets* insert_packet_storage(struct packet_storage* ps, struct 
     // add to linked list of relevant struct address_packets
     /*ib->head ... */
     /*ib->head*/
+    ++ib->n_packets;
     tmp->next = ib->head;
     ib->head = tmp;
     return tmp;
@@ -202,6 +195,13 @@ void p_eth_addr(uint8_t* addr){
         printf("%.2hx:", addr[i]);
     }
     printf("%.2hx\n", addr[5]);
+}
+
+void iaddr_to_str(in_addr_t ia, char* buf, ssize_t buflen){
+    struct in_addr in;
+
+    in.s_addr = ia;
+    inet_ntop(AF_INET, &in, buf, buflen);
 }
 
 int pp_buf(struct packet* p, ssize_t br){
@@ -296,9 +296,12 @@ _Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, ch
 // actually, this should take in in_addr_t and be CALLED by p_packet_storage()
 // this way we can pass either a user specified IP or an ip from the ip list
 // that's maintained
-void p_packet_storage(struct packet_storage* ps){
+void p_packet_storage(struct packet_storage* ps, _Bool summary, struct ps_filter* pf){
+    (void)pf;
     int idx = atomic_load(&ps->idx_filter);
+    char ipbuf[18] = {0};
 
+    printf("%i total packets read\n", ps->n_packets);
     for(int i = 0; i < ps->n_buckets; ++i){
         if(!ps->buckets[i]){
             continue;
@@ -308,9 +311,13 @@ void p_packet_storage(struct packet_storage* ps){
         // we can have a list of n in_addr_t
         // we'll print 
         for(struct ip_bucket* ib = ps->buckets[i]; ib; ib = ib->next){
-            if(idx == -1 || ps->ip_addresses[idx] == ib->head->p->ihdr.saddr){
+            iaddr_to_str(ib->head->p->ihdr.saddr, ipbuf, sizeof(ipbuf));
+            printf("IP %s: %i packets captured\n", ipbuf, ib->n_packets);
+            /* summary mode prints only info about packets (and indices?) */
+            if(!summary && (idx == -1 || ps->ip_addresses[idx] == ib->head->p->ihdr.saddr)){
                 for(struct address_packets* ap = ib->head; ap; ap = ap->next){
-                    hexdump((uint8_t*)ap->p, ap->len, 1);
+                    p_packet(ap, 1);
+                    /*hexdump((uint8_t*)ap->p, ap->len, 1);*/
                 }
             }
         }
@@ -375,14 +382,17 @@ int main(){
         ap = insert_packet_storage(&ps, (struct packet*)buf, br);
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){*/
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.63", 0)){*/
+        /*if(!filter_packet(buf, br, NULL, NULL, "192.168.86.108", 0)){*/
         if(!filter_packet(buf, br, NULL, NULL, 0, 0)){
             free(buf);
             continue;
         }
         puts("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         printf("read %li bytes\n", br);
+        p_packet_storage(&ps, 1, NULL);
 
-        p_packet(ap, 1);
+        (void)ap;
+        /*p_packet(ap, 1);*/
         /*free(buf);*/
     }
 }
