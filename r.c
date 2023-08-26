@@ -189,13 +189,6 @@ int pp_buf(struct packet* p, ssize_t br){
         return 1;
     }
 
-    /*
-     * printf("sizeof packet, %i, br %i\n", sizeof(struct packet), br);
-     * printf("%i == %i\n", ntohs(((struct packet*)buf)->ihdr.saddr), ihdr->saddr);
-    */
-    /*p_eth_addr(((struct packet*)buf)->ehdr.h_source);*/
-
-
     src.s_addr = p->ihdr.saddr;
     dest.s_addr = p->ihdr.daddr;
     printf("packet len: %i\n", ntohs(p->ihdr.tot_len));
@@ -203,15 +196,6 @@ int pp_buf(struct packet* p, ssize_t br){
     printf("saddr: %s\n", ipbuf);
     inet_ntop(AF_INET, &dest, ipbuf, sizeof(ipbuf));
     printf("daddr: %s\n", ipbuf);
-/*
- * 
- *     struct packet* pp = buf;
- *     src.s_addr = pp->ihdr.saddr;
- *     inet_ntop(AF_INET, &src, ipbuf, sizeof(ipbuf));
- *     printf("SADDR PACKET: %s\n", ipbuf);
-*/
-    /*ihdr->daddr;*/
-    /*ihdr->saddr*/
     return 2;
 }
 
@@ -241,7 +225,6 @@ _Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, ch
 
     if(s_ip)inet_pton(AF_INET, s_ip, &s_ip_filter);
     if(d_ip)inet_pton(AF_INET, s_ip, &d_ip_filter);
-    /*phdr->ihdr.*/
 
     if(br < (long)sizeof(struct packet))
         return 0;
