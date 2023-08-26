@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -28,9 +29,18 @@ struct __attribute__((__packed__)) packet{
     struct iphdr ihdr;
 };
 
+/* no need to waste space by storing address, it's in p */
+/*this stores an individual IP teehee :)*/
+struct address_packets{
+    struct packet* p;
+    int len;
+
+    struct address_packets* next;
+};
+
 struct ip_bucket{
     /*in_addr_t ip;*/
-    struct packet* head;
+    struct address_packets* head;
     struct ip_bucket* next;
 };
 
@@ -41,41 +51,134 @@ struct packet_storage{
     */
     int n_buckets;
     struct ip_bucket** buckets;
+
+    _Atomic int idx_filter;
+    _Atomic int n_ips, ip_cap;
+    in_addr_t* ip_addresses;
 };
 
 void init_packet_storage(struct packet_storage* ps, int n_buckets){
     ps->n_buckets = n_buckets;
     ps->buckets = calloc(sizeof(struct ip_bucket*), ps->n_buckets);
+    ps->idx_filter = -1;
+
+    ps->ip_cap = 1000;
+    ps->n_ips = 0;
+    ps->ip_addresses = malloc(sizeof(in_addr_t)*ps->ip_cap);
 }
 
 /* TODO: make this threadsafe */
-void insert_packet_storage(struct packet_storage* ps, struct packet* p){
+/*
+ * pretty sure this just doesn't work at all - it only stores one packet
+ * per bucket!
+ * head needs a pointer to next
+ * i'll wrap packet in a struct that is a linked list
+*/
+
+
+/*
+in summary:
+
+    insert_packet_storage needs to be updated to actually insert into a linked list
+
+    ip_addresses needs to be maintained in insert_packet_storage()
+
+    need to add a new thread to read from stdin to grab which index of ip_addresses has been selected
+    for now this same thread will print packets to the screen until another keypress is registered
+*/
+
+
+/*struct address_packets* create*/
+struct ip_bucket* create_bucket(struct address_packets* ap){
+    struct ip_bucket* ib = malloc(sizeof(struct ip_bucket));
+
+    ib->next = NULL;
+    ib->head = ap;
+
+    return ib;
+}
+
+void insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t sz){
     int idx = p->ihdr.saddr % ps->n_buckets;
-    struct ip_bucket* ib = ps->buckets[idx], * tmp;// * prev_i;
+    struct ip_bucket* ib = ps->buckets[idx], * prev_ib = NULL, * tmp_ib;
+    struct address_packets* tmp = malloc(sizeof(struct address_packets));
+
+    tmp->len = sz;
+    tmp->p = p;
+    tmp->next = NULL;
 
     /* create bucket */
     if(!ib){
-        ib = (ps->buckets[idx] = malloc(sizeof(struct ip_bucket)));
-        /*ib->ip = p->ihdr.saddr;*/
-        ib->next = NULL;
-        ib->head = p;
+        ib = create_bucket(tmp);
+        ps->buckets[idx] = ib;
+        return;
+
+        /*increment ps->n_ips atomically to reserve an insertion point*/
+// TODO: insert into list of addresses in ps->addresses here
+// because we've found a new address
+// this is then printed out each time insert_packet_storage() returns TRUE
+// and referenced when user wants to print something to the screen for a given IP
+/*
+ *         deal with cap if i need to
+ *         insert into addresses
+ *         idx will store an IP!
+ * 
+ *         then we'll use this reference
+ *         during p_packet_storage()
+ *         with whatever idx_filter is set to
+*/
     }
+
+    /* from this point on we'll just be inserting tmp */
+    #if 0
+    TODO:
+        find a bucket with appropriate IP :)
+        insert to head of ib->list with tmp :) hehe
+    #endif
 
     for(struct ip_bucket* i = ib; i; i = i->next){
-        if(i->head->ihdr.saddr == p->ihdr.saddr){
+        if(i->head->p->ihdr.saddr == p->ihdr.saddr){
             ib = i;
+            prev_ib = tmp_ib;
             break;
         }
-        /*prev_i = i;*/
+        tmp_ib = i;
     }
 
-    if(ib->head->ihdr.saddr != p->ihdr.saddr){
-        tmp = malloc(sizeof(struct ip_bucket));
-        tmp->head = p;
-        tmp->next = ib;
+
+    /*
+     * prev->ib->next
+     * prev->ib->new->next
+     * need to keep track of prev also, either store it
+     * or throughout this fn()
+    */
+    /* if there's an appropriate bucket but no matching
+     * struct address_packets, create it
+     */
+    /*ib will always be the initial ib if we're in this branch*/
+    if(ib->head->p->ihdr.saddr != p->ihdr.saddr){
+        tmp_ib = malloc(sizeof(struct ip_bucket*));
+        tmp_ib->next = ib;
+        tmp_ib->head = NULL;
+        ps->buckets[idx] = tmp_ib;
+        ib = tmp_ib;
+
+        /*ib->*/
+        /*tmp->next = ib->head;*/
         /*ib->head = tmp;*/
-        ps->buckets[idx] = tmp;
+        /*ib->head = tmp;*/
+        /*ps->buckets[idx] = tmp;*/
+        /*insert into ps->addresses here too*/
+        /*return;*/
     }
+
+    (void)prev_ib;
+    /* if we're here, we have a bucket but juts need to our packet into ib */
+    // add to linked list of relevant struct address_packets
+    /*ib->head ... */
+    /*ib->head*/
+    tmp->next = ib->head;
+    ib->head = tmp;
 }
 
 void hexdump(uint8_t* buf, ssize_t br, _Bool onlyalph){
@@ -145,6 +248,8 @@ int pp_buf(uint8_t* buf, ssize_t br){
 }
 
 /* TODO: maybe read more bytes depending on tot_len */
+// TODO: read only sizeof(packet)
+// then read an additional tot_len
 uint8_t* read_packet(int sock, int max_sz, ssize_t* br){
     uint8_t* packet = malloc(max_sz);
 
@@ -181,6 +286,54 @@ _Bool filter_packet(uint8_t* p, ssize_t br, uint8_t* s_addr, uint8_t* d_addr, ch
     return 1;
 }
 
+// prints out all packets for a given user according to the given idx
+// actually, this should take in in_addr_t and be CALLED by p_packet_storage()
+// this way we can pass either a user specified IP or an ip from the ip list
+// that's maintained
+void p_packet_storage(struct packet_storage* ps){
+    int idx = atomic_load(&ps->idx_filter);
+
+    for(int i = 0; i < ps->n_buckets; ++i){
+        if(!ps->buckets[i]){
+            continue;
+        }
+        // if idx == -1 || match
+        // we can maybe use filter_packet()
+        // we can have a list of n in_addr_t
+        // we'll print 
+        for(struct ip_bucket* ib = ps->buckets[i]; ib; ib = ib->next){
+            if(idx == -1 || ps->ip_addresses[idx] == ib->head->p->ihdr.saddr){
+                for(struct address_packets* ap = ib->head; ap; ap = ap->next){
+                    hexdump((uint8_t*)ap->p, ap->len, 1);
+                }
+            }
+        }
+    }
+}
+
+/*
+ * read from stdin, any time enter is pressed
+ * we set the filter to the corresponding index
+ *
+ * i'll have a thread to read from stdin continuously
+ * if we read empty, set idx to -1
+ * otherwise, set to read idx
+ *
+ * i'll have another thread to print to stdout continuously
+ * it'll just call p_packet_storage()
+ *
+ * how should i have p_packet_storage() stream data as it comes in?
+ *
+ * maybe it won't
+ * it could maybe just print all packets from a given IP 
+ * on each press of idx
+ *
+ * could also have p_packet_storage()
+ * as well as stream_packet_storage()
+ *
+ *
+ * if an idx is set we 
+*/
 
 /*
  * TODO:
@@ -201,6 +354,9 @@ int main(){
     /*struct sockaddr* sa_i;*/
     /*socklen_t slen_i;*/
     ssize_t br;
+    struct packet_storage ps;
+
+    init_packet_storage(&ps, 10000);
     
 
     /*printf("sock %i\n", sock);*/
@@ -209,6 +365,7 @@ int main(){
         buf = read_packet(sock, 4096, &br);
 
         if(!buf)continue;
+        insert_packet_storage(&ps, (struct packet*)buf, br);
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){*/
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.63", 0)){*/
         if(!filter_packet(buf, br, NULL, NULL, 0, 0)){
@@ -221,6 +378,6 @@ int main(){
         hexdump(buf, br, 1);
         puts("");
         pp_buf(buf, br);
-        free(buf);
+        /*free(buf);*/
     }
 }
