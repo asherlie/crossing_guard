@@ -98,7 +98,7 @@ struct ip_bucket* create_bucket(struct address_packets* ap){
     return ib;
 }
 
-void insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t sz){
+struct address_packets* insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t sz){
     int idx = p->ihdr.saddr % ps->n_buckets;
     struct ip_bucket* ib = ps->buckets[idx], * prev_ib = NULL, * tmp_ib;
     struct address_packets* tmp = malloc(sizeof(struct address_packets));
@@ -111,7 +111,7 @@ void insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t 
     if(!ib){
         ib = create_bucket(tmp);
         ps->buckets[idx] = ib;
-        return;
+        return tmp;
 
         /*increment ps->n_ips atomically to reserve an insertion point*/
 // TODO: insert into list of addresses in ps->addresses here
@@ -179,6 +179,7 @@ void insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t 
     /*ib->head*/
     tmp->next = ib->head;
     ib->head = tmp;
+    return tmp;
 }
 
 void hexdump(uint8_t* buf, ssize_t br, _Bool onlyalph){
@@ -360,6 +361,7 @@ int main(){
     /*socklen_t slen_i;*/
     ssize_t br;
     struct packet_storage ps;
+    struct address_packets* ap;
 
     init_packet_storage(&ps, 10000);
     
@@ -370,7 +372,7 @@ int main(){
         buf = read_packet(sock, 4096, &br);
 
         if(!buf)continue;
-        insert_packet_storage(&ps, (struct packet*)buf, br);
+        ap = insert_packet_storage(&ps, (struct packet*)buf, br);
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.119", 0)){*/
         /*if(!filter_packet(buf, br, NULL, NULL, "192.168.4.63", 0)){*/
         if(!filter_packet(buf, br, NULL, NULL, 0, 0)){
@@ -380,9 +382,7 @@ int main(){
         puts("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         printf("read %li bytes\n", br);
 
-        hexdump(buf, br, 1);
-        puts("");
-        pp_buf((struct packet*)buf, br);
+        p_packet(ap, 1);
         /*free(buf);*/
     }
 }
