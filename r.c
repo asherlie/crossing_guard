@@ -66,9 +66,7 @@ void init_packet_storage(struct packet_storage* ps, int n_buckets){
 /* TODO: make this threadsafe */
 
 /*
-in summary:
-
-    insert_packet_storage needs to be updated to actually insert into a linked list
+TODO:
 
     ip_addresses needs to be maintained in insert_packet_storage()
 
@@ -77,7 +75,6 @@ in summary:
 */
 
 
-/*struct address_packets* create*/
 struct ip_bucket* create_bucket(struct address_packets* ap){
     struct ip_bucket* ib = malloc(sizeof(struct ip_bucket));
 
@@ -90,7 +87,7 @@ struct ip_bucket* create_bucket(struct address_packets* ap){
 
 struct address_packets* insert_packet_storage(struct packet_storage* ps, struct packet* p, ssize_t sz){
     int idx = p->ihdr.saddr % ps->n_buckets;
-    struct ip_bucket* ib = ps->buckets[idx], * prev_ib = NULL, * tmp_ib;
+    struct ip_bucket* ib = ps->buckets[idx], * tmp_ib;
     struct address_packets* tmp = malloc(sizeof(struct address_packets));
 
     ++ps->n_packets;
@@ -121,54 +118,25 @@ struct address_packets* insert_packet_storage(struct packet_storage* ps, struct 
 */
     }
 
-    /* from this point on we'll just be inserting tmp */
-    #if 0
-    TODO:
-        find a bucket with appropriate IP :)
-        insert to head of ib->list with tmp :) hehe
-    #endif
-
     for(struct ip_bucket* i = ib; i; i = i->next){
         if(i->head->p->ihdr.saddr == p->ihdr.saddr){
             ib = i;
-            prev_ib = tmp_ib;
             break;
         }
-        tmp_ib = i;
     }
 
 
-    /*
-     * prev->ib->next
-     * prev->ib->new->next
-     * need to keep track of prev also, either store it
-     * or throughout this fn()
-    */
     /* if there's an appropriate bucket but no matching
      * struct address_packets, create it
      */
-    /*ib will always be the initial ib if we're in this branch*/
     if(ib->head->p->ihdr.saddr != p->ihdr.saddr){
         tmp_ib = malloc(sizeof(struct ip_bucket*));
         tmp_ib->next = ib;
         tmp_ib->head = NULL;
         ps->buckets[idx] = tmp_ib;
         ib = tmp_ib;
-
-        /*ib->*/
-        /*tmp->next = ib->head;*/
-        /*ib->head = tmp;*/
-        /*ib->head = tmp;*/
-        /*ps->buckets[idx] = tmp;*/
-        /*insert into ps->addresses here too*/
-        /*return;*/
     }
 
-    (void)prev_ib;
-    /* if we're here, we have a bucket but juts need to our packet into ib */
-    // add to linked list of relevant struct address_packets
-    /*ib->head ... */
-    /*ib->head*/
     ++ib->n_packets;
     tmp->next = ib->head;
     ib->head = tmp;
