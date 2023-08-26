@@ -203,8 +203,7 @@ void p_eth_addr(uint8_t* addr){
     printf("%.2hx\n", addr[5]);
 }
 
-int pp_buf(uint8_t* buf, ssize_t br){
-    struct packet* p = (struct packet*)buf;
+int pp_buf(struct packet* p, ssize_t br){
     char ipbuf[18] = {0};
     struct in_addr src, dest;
 
@@ -245,6 +244,12 @@ int pp_buf(uint8_t* buf, ssize_t br){
     /*ihdr->daddr;*/
     /*ihdr->saddr*/
     return 2;
+}
+
+void p_packet(struct address_packets* ap, _Bool hide_nonalpha){
+    hexdump((uint8_t*)ap->p, ap->len, hide_nonalpha);
+    puts("");
+    pp_buf(ap->p, ap->len);
 }
 
 /* TODO: maybe read more bytes depending on tot_len */
@@ -377,7 +382,7 @@ int main(){
 
         hexdump(buf, br, 1);
         puts("");
-        pp_buf(buf, br);
+        pp_buf((struct packet*)buf, br);
         /*free(buf);*/
     }
 }
