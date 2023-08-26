@@ -11,6 +11,9 @@
 #include <arpa/inet.h>
 /*#include <net/ieee80211_radiotap.h>*/
 
+#define ANSI_CLR "\033[2J"
+#define ANSI_HOM "\033[H"
+
 struct ps_filter{
     uint8_t* s_addr;
     uint8_t* d_addr;
@@ -340,6 +343,7 @@ int main(){
         }
         puts("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         printf("read %li bytes\n", br);
+        printf("%s%s", ANSI_CLR, ANSI_HOM);
         p_packet_storage(&ps, 1, NULL);
 
         (void)ap;
